@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PIPER House Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.1/mqtt.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171c22; --line:#252c34; --text:#e6e9ed;
+    --muted:#8a94a0; --on:#ffc94a; --off:#3a424c; --ok:#4ade80; --bad:#f87171;
+    --accent:#5aa9e6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  header{padding:20px 24px;border-bottom:1px solid var(--line);
+         display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+  h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
+  h1 span{color:var(--muted);font-weight:400}
+  .pill{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);
+        display:inline-flex;align-items:center;gap:6px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--bad)}
+  .dot.up{background:var(--ok)}
+  main{max-width:1000px;margin:0 auto;padding:24px}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{font-size:13px;margin:0 0 12px;font-weight:600;color:var(--muted);
+           text-transform:uppercase;letter-spacing:.6px}
+  .bulb{width:100%;height:74px;border-radius:9px;background:var(--off);
+        display:flex;align-items:center;justify-content:center;font-size:30px;
+        transition:background .25s, box-shadow .25s;margin-bottom:12px}
+  .bulb.on{background:var(--on);box-shadow:0 0 26px -4px var(--on)}
+  .bulb.on.red{background:var(--bad);box-shadow:0 0 26px -4px var(--bad)}
+  .meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+  .meta b{color:var(--text);font-weight:600}
+  .btns{display:flex;gap:8px;margin-top:12px}
+  button{flex:1;background:#20272f;color:var(--text);border:1px solid var(--line);
+         border-radius:7px;padding:7px;cursor:pointer;font-size:12px}
+  button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  input[type=range]{width:100%;margin-top:10px;accent-color:var(--accent)}
+  #log{background:#0b0e11;border:1px solid var(--line);border-radius:12px;padding:14px;
+       margin-top:20px;height:220px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;
+       font-size:12px;white-space:pre-wrap}
+  #log div{padding:1px 0;border-bottom:1px solid #14181d}
+  .t-cmd{color:var(--accent)} .t-state{color:var(--on)} .t-sensor{color:var(--ok)}
+  .t-sys{color:var(--muted)} .t-err{color:var(--bad)}
+  .cfg{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:auto}
+  .cfg input{background:#0b0e11;border:1px solid var(--line);color:var(--text);
+             border-radius:6px;padding:5px 8px;font-size:12px;width:170px}
+  .note{color:var(--muted);font-size:12px;margin-top:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>PIPER <span>· house monitor</span></h1>
+  <span class="pill"><span class="dot" id="dot-broker"></span><span id="s-broker">broker: offline</span></span>
+  <span class="pill"><span class="dot" id="dot-house"></span><span id="s-house">house01: unknown</span></span>
+  <div class="cfg">
+    <input id="cfg-host" value="ws://localhost:9001" title="MQTT over WebSockets URL">
+    <input id="cfg-root" value="piper" title="Topic root" style="width:120px">
+    <button id="btn-connect" style="flex:0 0 auto;padding:5px 14px">Connect</button>
+  </div>
+</header>
+
+<main>
+  <div class="grid" id="devices"></div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>Sensors</h2>
+    <div class="meta"><span>Living room occupancy</span><b id="s-occ">—</b></div>
+    <div class="meta" style="margin-top:6px"><span>Stove on for</span><b id="s-stove">—</b></div>
+  </div>
+
+  <div id="log"><div class="t-sys">waiting for connection…</div></div>
+  <p class="note">
+    This page is a passive monitor plus a manual control panel. It speaks the same MQTT
+    contract as the ESP32, so it can sit alongside the real hardware during a demo.
+    It needs a WebSocket listener on the broker — see <code>mosquitto.conf</code>.
+  </p>
+</main>
+
+<script>
+const DEVICES = [
+  { id:'living_light',  name:'Living room light', icon:'💡', type:'switch'   },
+  { id:'bedroom_light', name:'Bedroom light',     icon:'🛏️', type:'switch'   },
+  { id:'fan',           name:'Fan',               icon:'🌀', type:'dimmable' },
+  { id:'stove',         name:'Stove',             icon:'🔥', type:'switch', red:true, offOnly:true },
+];
+
+let client = null, root = 'piper';
+const el = id => document.getElementById(id);
+
+// ---- build the cards -------------------------------------------------------
+el('devices').innerHTML = DEVICES.map(d => `
+  <div class="card" data-dev="${d.id}">
+    <h2>${d.name}</h2>
+    <div class="bulb ${d.red ? 'red' : ''}" id="bulb-${d.id}">${d.icon}</div>
+    <div class="meta"><span>state</span><b id="st-${d.id}">unknown</b></div>
+    <div class="meta"><span>changed by</span><b id="src-${d.id}">—</b></div>
+    ${d.type === 'dimmable'
+      ? `<input type="range" min="0" max="100" step="5" value="0" id="rng-${d.id}" disabled>` : ''}
+    <div class="btns">
+      <button data-cmd="on"  data-dev="${d.id}" ${d.offOnly ? 'disabled title="Safety: the AI may never switch the stove on"' : ''}>On</button>
+      <button data-cmd="off" data-dev="${d.id}">Off</button>
+    </div>
+  </div>`).join('');
+
+// ---- logging ---------------------------------------------------------------
+function log(kind, text){
+  const box = el('log');
+  const line = document.createElement('div');
+  line.className = 't-' + kind;
+  line.textContent = new Date().toLocaleTimeString() + '  ' + text;
+  box.appendChild(line);
+  while (box.childNodes.length > 300) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+// ---- MQTT ------------------------------------------------------------------
+function connect(){
+  const url = el('cfg-host').value.trim();
+  root = el('cfg-root').value.trim() || 'piper';
+  if (client) { try { client.end(true); } catch(e){} }
+
+  log('sys', 'connecting to ' + url + ' …');
+  client = mqtt.connect(url, {
+    clientId: 'piper-dashboard-' + Math.random().toString(16).slice(2, 8),
+    reconnectPeriod: 3000, connectTimeout: 6000,
+  });
+
+  client.on('connect', () => {
+    setDot('broker', true, 'broker: connected');
+    log('sys', 'connected — subscribing to ' + root + '/#');
+    client.subscribe([`${root}/state/+`, `${root}/sensor/+`,
+                      `${root}/availability/+`, `${root}/cmd/+`], { qos: 1 });
+  });
+  client.on('reconnect', () => log('sys', 'reconnecting…'));
+  client.on('close',   () => setDot('broker', false, 'broker: offline'));
+  client.on('error', e => log('err', 'error: ' + e.message));
+  client.on('message', onMessage);
+}
+
+function setDot(which, up, text){
+  el('dot-' + which).classList.toggle('up', up);
+  el('s-' + which).textContent = text;
+}
+
+function onMessage(topic, buf){
+  const parts = topic.split('/');
+  const kind = parts[1], name = parts[2];
+  const raw = buf.toString();
+
+  if (kind === 'availability'){
+    if (name === 'house01') setDot('house', raw === 'online', 'house01: ' + raw);
+    log('sys', `${name} is ${raw}`);
+    return;
+  }
+  if (kind === 'cmd'){ log('cmd', `→ ${topic}  ${raw}`); return; }
+
+  let d; try { d = JSON.parse(raw); } catch(e){ log('err','bad JSON on '+topic); return; }
+
+  if (kind === 'state'){
+    log('state', `← ${name} = ${d.state} ${d.value ?? ''}%  (${d.source ?? '?'})`);
+    renderState(name, d);
+  } else if (kind === 'sensor'){
+    log('sensor', `← ${name} = ${d.value}`);
+    if (name === 'living_occupancy')
+      el('s-occ').textContent = d.value ? 'someone is there' : 'empty';
+    if (name === 'stove_on_seconds')
+      el('s-stove').textContent = d.value > 0
+        ? Math.floor(d.value/60) + ' min ' + (d.value%60) + ' s' : 'off';
+  }
+}
+
+function renderState(id, d){
+  const bulb = el('bulb-' + id); if (!bulb) return;
+  const on = d.state === 'on';
+  bulb.classList.toggle('on', on);
+  bulb.style.opacity = on && d.value ? (0.35 + 0.65 * d.value / 100) : 1;
+  el('st-' + id).textContent = on ? `on${d.value ? ' · ' + d.value + '%' : ''}` : 'off';
+  el('src-' + id).textContent = d.source || '—';
+  const rng = el('rng-' + id);
+  if (rng){ rng.disabled = false; rng.value = d.value || 0; }
+}
+
+// ---- publishing ------------------------------------------------------------
+function publishCmd(device, action, value){
+  if (!client || !client.connected){ log('err', 'not connected'); return; }
+  const payload = {
+    action, req_id: Math.random().toString(16).slice(2, 8),
+    source: 'manual', ts: Math.floor(Date.now() / 1000),
+  };
+  if (value !== undefined) payload.value = value;
+  // retain MUST be false — a retained command replays on every reconnect
+  client.publish(`${root}/cmd/${device}`, JSON.stringify(payload), { qos: 1, retain: false });
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('button[data-cmd]');
+  if (b) publishCmd(b.dataset.dev, b.dataset.cmd);
+});
+document.addEventListener('change', e => {
+  if (e.target.id && e.target.id.startsWith('rng-'))
+    publishCmd(e.target.id.slice(4), 'set', Number(e.target.value));
+});
+el('btn-connect').addEventListener('click', connect);
+connect();
+</script>
+</body>
+</html>

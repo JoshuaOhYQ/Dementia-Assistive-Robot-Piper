@@ -4,7 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PIPER House Monitor</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.1/mqtt.min.js"></script>
+<!-- Local copy first: no internet needed, and no surprises from a CDN serving a
+     different build than the one this page was tested against. Falls back to the
+     CDN only if mqtt.min.js is missing from this folder. -->
+<script src="mqtt.min.js"></script>
+<script>
+if (typeof mqtt === "undefined") {
+  document.write('<scr' + 'ipt src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.1/mqtt.min.js"><\/scr' + 'ipt>');
+}
+</script>
 <style>
   :root{
     --bg:#0f1216; --panel:#171c22; --line:#252c34; --text:#e6e9ed;
@@ -57,6 +65,7 @@
   <h1>PIPER <span>· house monitor</span></h1>
   <span class="pill"><span class="dot" id="dot-broker"></span><span id="s-broker">broker: offline</span></span>
   <span class="pill"><span class="dot" id="dot-house"></span><span id="s-house">house01: unknown</span></span>
+  <span class="pill" id="s-msgs">0 msgs</span>
   <div class="cfg">
     <input id="cfg-host" value="ws://localhost:9001" title="MQTT over WebSockets URL">
     <input id="cfg-root" value="piper" title="Topic root" style="width:120px">
@@ -89,8 +98,15 @@ const DEVICES = [
   { id:'stove',         name:'Stove',             icon:'🔥', type:'switch', red:true, offOnly:true },
 ];
 
-let client = null, root = 'piper';
+let client = null, root = 'piper', msgCount = 0;
 const el = id => document.getElementById(id);
+
+// If the CDN script is blocked, say so on the page instead of failing silently.
+if (typeof mqtt === 'undefined') {
+  document.getElementById('log').innerHTML =
+    '<div class="t-err">mqtt.js failed to load from the CDN. ' +
+    'Check your internet connection, then reload.</div>';
+}
 
 // ---- build the cards -------------------------------------------------------
 el('devices').innerHTML = DEVICES.map(d => `
@@ -133,8 +149,16 @@ function connect(){
   client.on('connect', () => {
     setDot('broker', true, 'broker: connected');
     log('sys', 'connected — subscribing to ' + root + '/#');
-    client.subscribe([`${root}/state/+`, `${root}/sensor/+`,
-                      `${root}/availability/+`, `${root}/cmd/+`], { qos: 1 });
+    // One wildcard, exactly like `mosquitto_sub -t "piper/#"`. The callback is
+    // what turns a silently-failed subscription into a visible error.
+    client.subscribe(`${root}/#`, { qos: 1 }, (err, granted) => {
+      if (err) { log('err', 'SUBSCRIBE FAILED: ' + err.message); return; }
+      if (!granted || !granted.length) {
+        log('err', 'SUBSCRIBE returned nothing — broker refused the topic filter');
+        return;
+      }
+      granted.forEach(g => log('sys', 'subscribed: ' + g.topic + '  (qos ' + g.qos + ')'));
+    });
   });
   client.on('reconnect', () => log('sys', 'reconnecting…'));
   client.on('close',   () => setDot('broker', false, 'broker: offline'));
@@ -148,9 +172,15 @@ function setDot(which, up, text){
 }
 
 function onMessage(topic, buf){
-  const parts = topic.split('/');
-  const kind = parts[1], name = parts[2];
   const raw = buf.toString();
+  msgCount++;
+  el('s-msgs').textContent = msgCount + ' msgs';
+
+  // Split from the RIGHT so a multi-segment topic root ("piper/g2/24013567")
+  // still resolves. Splitting from the left assumed the root was one word.
+  const seg = topic.split('/');
+  const name = seg[seg.length - 1];
+  const kind = seg[seg.length - 2];
 
   if (kind === 'availability'){
     if (name === 'house01') setDot('house', raw === 'online', 'house01: ' + raw);

@@ -15,14 +15,21 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Scratch database for the tests. tempfile.gettempdir() resolves to /tmp on
+# Linux/macOS and %LOCALAPPDATA%\Temp on Windows — a hardcoded "/tmp/..." fails
+# on Windows with sqlite3.OperationalError: unable to open database file.
+TEST_DB = str(Path(tempfile.gettempdir()) / "piper_test.db")
+
 os.environ.setdefault("PIPER_TOPIC_ROOT", "pipertest")
-os.environ.setdefault("PIPER_DB", "/tmp/piper_test.db")
+os.environ.setdefault("PIPER_DB", TEST_DB)
 
 import command_bridge          # noqa: E402
 import config                  # noqa: E402
@@ -42,7 +49,7 @@ class Base(unittest.TestCase):
             stderr=subprocess.STDOUT, text=True, env=os.environ.copy(),
         )
         time.sleep(2.0)
-        cls.diary = Diary("/tmp/piper_test.db")
+        cls.diary = Diary(TEST_DB)
         cls.home = SmartHome()
         assert cls.home.connect(timeout=5), "broker not reachable on localhost:1883"
         time.sleep(1.5)

@@ -1,5 +1,5 @@
 # PIPER — Smart Home / MQTT Subsystem
-#testing, Joshua is Gay
+# testing, Joshua is Gay
 Implements Section 3.2 (Smart Home Automation), 3.4.2 and 3.5.2 of the IDP1 G2 final
 report: the path from *"Piper, turn off the light"* to a relay actually clicking, plus
 the automatic home-monitoring rules.

@@ -29,6 +29,7 @@ class RuleEngine:
         self.alert = alert or (lambda text: log.warning("TELEGRAM: %s", text))
 
         self._empty_since: float | None = None      # living room empty since
+        self._prev_occupied: bool = False           # for detecting "someone just arrived"
         self._night_light_on_by_rule = False
         self._stove_warned = False
 
@@ -63,15 +64,22 @@ class RuleEngine:
         elif self._empty_since is None:
             self._empty_since = time.time()
 
-        self._rule_night_path_light(occ, now)
+        just_arrived = occ and not self._prev_occupied
+        self._prev_occupied = occ
+
+        self._rule_night_path_light(occ, just_arrived, now)
         self._rule_unattended_stove(occ)
         self._rule_empty_room_light(occ)
 
     # -- rule 1: light the way at night ------------------------------------
 
-    def _rule_night_path_light(self, occupied: bool, now=None):
+    def _rule_night_path_light(self, occupied: bool, just_arrived: bool, now=None):
         light = self.home.states["living_light"]
-        if occupied and self._is_night(now) and light.state == "off":
+        # Fire only on the MOMENT someone appears (getting out of bed, walking
+        # in) — not continuously while they are there. Otherwise, if the person
+        # says "turn the light off" at night while sitting in the room, the rule
+        # switches it straight back on five seconds later and fights them.
+        if just_arrived and self._is_night(now) and light.state == "off":
             ok, _ = self.home.command("living_light", "on", source="rule")
             if ok:
                 self._night_light_on_by_rule = True

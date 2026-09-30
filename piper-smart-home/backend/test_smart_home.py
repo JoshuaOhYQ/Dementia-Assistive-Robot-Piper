@@ -138,6 +138,15 @@ class TestLLMValidation(Base):
         self.assertEqual(d["speech"], "Okay.")
         self.assertEqual(len(d["commands"]), 1)
 
+    def test_26_model_cannot_claim_what_did_not_happen(self):
+        """If the model says 'turning the stove on', the robot must not repeat it."""
+        lie = {"speech": "Sure, turning the stove on now!",
+               "commands": [{"device": "stove", "action": "on"}]}
+        res = command_bridge.execute_detailed(self.home, lie)
+        self.assertEqual(res["accepted"], [])
+        self.assertNotIn("turning the stove on", res["speech"].lower())
+        self.assertEqual(res["speech"], command_bridge.SAFETY_LINE)
+
     def test_25_survives_garbage(self):
         d = command_bridge.parse_llm_reply("I'm sorry, I didn't catch that")
         self.assertEqual(d["commands"], [])
@@ -169,6 +178,22 @@ class TestRules(Base):
         self.assertTrue(self._wait_state("living_light", "on"),
                         "night path lighting did not switch the light on")
         self.assertEqual(self.home.states["living_light"].source, "rule")
+
+    def test_30b_night_rule_does_not_fight_the_user(self):
+        """Regression: at night, with someone in the room, the person switches the
+        light off by voice. The rule must NOT switch it back on."""
+        night = datetime.now().replace(hour=23, minute=0)
+        self.home.sensors["living_occupancy"] = {"value": True}
+        self.engine.tick(now=night)                              # arrival -> light on
+        self.assertTrue(self._wait_state("living_light", "on"))
+
+        ok, _ = self.home.command("living_light", "off", source="voice")
+        self.assertTrue(ok)
+        for _ in range(3):                                       # 3 more ticks, still occupied
+            self.engine.tick(now=night)
+            time.sleep(0.2)
+        self.assertEqual(self.home.states["living_light"].state, "off",
+                         "night rule switched the light back on against the user's wish")
 
     def test_31_empty_room_light_off(self):
         self.home.command("living_light", "on")

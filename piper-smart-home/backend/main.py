@@ -18,9 +18,9 @@ import sys
 import threading
 import time
 
-import command_bridge
 import config
 import gemini_client
+import pipeline
 from diary import Diary
 from rules import RuleEngine
 from smart_home import SmartHome
@@ -52,25 +52,7 @@ def alert(text: str):
 
 def handle_utterance(text: str, home: SmartHome, diary: Diary) -> str:
     """One pass of the conversation branch: STT text in, spoken reply out."""
-    diary_lines = Diary.as_lines(diary.today(limit=12))
-    prompt = command_bridge.build_system_prompt(home, diary_lines)
-
-    raw = gemini_client.ask(prompt, text)
-    reply = command_bridge.parse_llm_reply(raw)
-
-    # Memory questions the stub cannot answer are answered from the diary here,
-    # so the feature works even with no LLM at all.
-    if not reply.get("commands") and any(w in text.lower() for w in ("have i", "did i")):
-        for kw in ("medicine", "pill", "stove", "light", "fan"):
-            if kw in text.lower():
-                row = diary.last(kw)
-                if row:
-                    ts, event, value, _ = row
-                    return (f"Yes — at {time.strftime('%H:%M', time.localtime(ts))} "
-                            f"I recorded {event}: {value}.")
-                return f"I don't have a record of that today."
-
-    return command_bridge.execute(home, reply, diary=diary)
+    return pipeline.process(text, home, diary)["speech"]
 
 
 def monitoring_loop(engine: RuleEngine, stop: threading.Event):

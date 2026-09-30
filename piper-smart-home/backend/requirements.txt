@@ -1,3 +1,4 @@
 paho-mqtt>=1.6      # works with 1.x and 2.x (see mqtt_compat.py)
+flask>=3.0          # HTTP link to the robot ESP32 (server.py)
 # Optional — only needed for live Gemini. The backend runs without it.
 # google-generativeai>=0.8

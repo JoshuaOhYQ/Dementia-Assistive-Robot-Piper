@@ -32,6 +32,9 @@ mosquitto.conf                 broker config (fixes the "only listens on localho
 
 firmware/piper_house_node/
   piper_house_node.ino         smart-home ESP32: subscribes to commands, drives outputs
+firmware/piper_robot_node/
+  piper_robot_node.ino         robot ESP32: sends sentences to server.py over HTTP
+                               (Serial Monitor or BOOT button), prints reply + timings
 
 backend/
   config.py                    broker settings + the device registry (the security boundary)
@@ -40,12 +43,18 @@ backend/
   rules.py                     home-monitoring branch (night lighting, stove, empty rooms)
   diary.py                     SQLite event store (report section 3.4.6)
   gemini_client.py             Gemini wrapper with an offline keyword stub
+  pipeline.py                  one utterance: prompt → LLM → validator → MQTT, with timings
   main.py                      runnable CLI: type what the person says
-  test_smart_home.py           19 end-to-end tests — evidence for the testing section
+  server.py                    HTTP server for the robot ESP32; logs every request to test_log.csv
+  accuracy_run.py              measures Objective 3 (≥85% command execution accuracy)
+  preflight.py                 run first every session: one broker? firewall? LAN IP?
+  test_smart_home.py           21 end-to-end tests — evidence for the testing section
 
 sim/
   virtual_house.py             software twin of the ESP32. Same topics, same interlocks.
   dashboard.html               live browser view of the house (MQTT over WebSockets)
+  mqtt.min.js                  the dashboard's MQTT library, bundled so no internet is needed
+  ws_check.py                  diagnostic: is the WebSocket listener delivering?
   wokwi/                       diagram.json + instructions for the browser simulator
 ```
 
@@ -100,7 +109,7 @@ cd backend
 python test_smart_home.py
 ```
 
-19 tests, ~19 seconds. They start the virtual house themselves.
+21 tests, ~20 seconds. They start the virtual house themselves.
 
 ---
 

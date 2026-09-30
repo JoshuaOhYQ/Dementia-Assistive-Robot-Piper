@@ -106,11 +106,12 @@ class SmartHome:
         self.house_online = False
 
     def _on_message(self, client, userdata, msg):
-        try:
-            parts = msg.topic.split("/")
-            kind, name = parts[1], parts[2]
-        except IndexError:
+        # Read the last two segments, so a topic root with slashes in it
+        # ("piper/g2") still parses: <root...>/<kind>/<name>
+        parts = msg.topic.split("/")
+        if len(parts) < 3:
             return
+        kind, name = parts[-2], parts[-1]
 
         if kind == "availability":
             if name == config.HOUSE_NODE:

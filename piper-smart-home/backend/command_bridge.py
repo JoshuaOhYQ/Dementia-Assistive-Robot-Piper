@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
 import config
 from smart_home import SmartHome
@@ -147,33 +148,60 @@ def validate_commands(commands: list) -> tuple[list[dict], list[str]]:
 # 3. Execution
 # ---------------------------------------------------------------------------
 
-def execute(home: SmartHome, llm_reply: dict, diary=None) -> str:
-    """Run the validated commands and return the final line for text-to-speech."""
+SAFETY_LINE = ("For your safety I can't switch that on. "
+                "If you'd like to use it, please turn it on yourself and I'll remind you later.")
+UNKNOWN_LINE = "Sorry, I'm not able to control that."
+
+
+def execute_detailed(home: SmartHome, llm_reply: dict, diary=None,
+                     source: str = "voice") -> dict:
+    """Run the validated commands and report exactly what happened.
+
+    Returns a dict with the final spoken line plus per-command results and
+    timings — what the HTTP server returns to the robot ESP32 and writes to the
+    test log for the report.
+    """
     speech = str(llm_reply.get("speech", "")).strip()
     commands, rejections = validate_commands(llm_reply.get("commands", []))
 
-    failures = []
+    results = []
     for c in commands:
-        ok, msg = home.command(c["device"], c["action"], c.get("value"), source="voice")
+        t0 = time.perf_counter()
+        ok, msg = home.command(c["device"], c["action"], c.get("value"), source=source)
+        mqtt_ms = round((time.perf_counter() - t0) * 1000, 1)
+        results.append({**c, "ok": ok, "message": msg, "mqtt_ms": mqtt_ms})
         if diary is not None:
             diary.log(event=c["device"], value=f'{c["action"]} ({"ok" if ok else "failed"})',
-                      source="voice")
-        if not ok:
-            failures.append(msg)
+                      source=source)
 
-    if rejections and not commands:
-        # The model asked for something it is not allowed to do at all.
-        if any(r.startswith("SAFETY") for r in rejections):
-            return (speech or "") + " I'm not able to switch that on for you, " \
-                                    "but I can remind you about it later."
+    safety_hit = any(r.startswith("SAFETY") for r in rejections)
+    failures = [r["message"] for r in results if not r["ok"]]
 
+    # Never let the model's own sentence stand when the system did something
+    # different from what that sentence claims.
     if failures:
-        # Do not let the robot claim success when the hardware said nothing.
-        return " ".join(failures)
+        speech = " ".join(failures)             # hardware did not confirm
+    elif rejections and not commands:
+        speech = SAFETY_LINE if safety_hit else UNKNOWN_LINE
+    elif safety_hit:
+        speech = (speech + " " if speech else "") + "I can't switch the stove on, though."
 
-    if diary is not None and isinstance(llm_reply.get("log"), dict):
+    if not failures and diary is not None and isinstance(llm_reply.get("log"), dict):
         entry = llm_reply["log"]
-        diary.log(event=str(entry.get("event", ""))[:60],
-                  value=str(entry.get("value", ""))[:60], source="conversation")
+        if entry.get("event"):
+            diary.log(event=str(entry.get("event", ""))[:60],
+                      value=str(entry.get("value", ""))[:60], source="conversation")
 
-    return speech or "Okay."
+    return {
+        "speech": speech or "Okay.",
+        "accepted": commands,
+        "rejected": rejections,
+        "results": results,
+        "all_ok": not failures,
+        "mqtt_ms": round(sum(r["mqtt_ms"] for r in results), 1),
+    }
+
+
+def execute(home: SmartHome, llm_reply: dict, diary=None) -> str:
+    """Run the validated commands and return the final line for text-to-speech."""
+    return execute_detailed(home, llm_reply, diary)["speech"]

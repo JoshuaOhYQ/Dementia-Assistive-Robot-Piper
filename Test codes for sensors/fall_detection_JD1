@@ -1,0 +1,166 @@
+#include <Arduino.h>
+
+#define RXD2 16
+#define TXD2 17
+
+// ---------- Tunable thresholds (speeds in cm/s) ----------
+#define SPEED_PEAK_CMS      65    // min speed to count as a fall burst
+#define SPEED_JUMP_CMS      40    // min speed increase between two frames
+#define STILL_SPEED_CMS     10    // below this = "not moving"
+#define MOVE_SPEED_CMS      30    // above this = person is moving again
+#define SETTLE_MS          400    // ignore data right after the burst
+#define STILL_TIME_MS     3000    // must stay still this long to confirm
+#define SUSPECT_TIMEOUT_MS 10000  // give up if not confirmed in this time
+#define TRACK_RADIUS_MM    2000   // how far the person may move during a fall
+#define COOLDOWN_MS       10000   // pause after an alert
+
+struct Target {
+  int x, y, v;
+  bool active;
+};
+
+enum State { MONITOR, SUSPECT, COOLDOWN };
+State state = MONITOR;
+
+int prevAbsV[3] = {0, 0, 0};
+unsigned long suspectStart = 0, stillSince = 0, cooldownStart = 0;
+int fx = 0, fy = 0;                 // last known position of suspected faller
+
+unsigned long lastPrint = 0;
+uint32_t packetCount = 0;
+
+int16_t decode(uint8_t lo, uint8_t hi) {
+  uint16_t raw = lo | (hi << 8);
+  int16_t mag = raw & 0x7FFF;
+  return (raw & 0x8000) ? mag : -mag;   // bit15 = 1 -> positive
+}
+
+void processFrame(Target t[3]) {
+  unsigned long now = millis();
+
+  switch (state) {
+
+    case MONITOR:
+      for (int i = 0; i < 3; i++) {
+        if (!t[i].active) continue;
+        int absV = abs(t[i].v);
+        int jump = absV - prevAbsV[i];
+        if (absV >= SPEED_PEAK_CMS && jump >= SPEED_JUMP_CMS) {
+          state = SUSPECT;
+          suspectStart = now;
+          stillSince = 0;
+          fx = t[i].x;
+          fy = t[i].y;
+          Serial.printf(">> Sudden movement (V=%d cm/s, jump=%d). Checking...\n",
+                        t[i].v, jump);
+          break;
+        }
+      }
+      break;
+
+    case SUSPECT: {
+      // Timeout: no confirmation, person probably just moved quickly
+      if (now - suspectStart > SUSPECT_TIMEOUT_MS) {
+        Serial.println(">> Cancelled: timeout");
+        state = MONITOR;
+        break;
+      }
+
+      // Find the active target closest to the last known position
+      int best = -1;
+      long bestDist = (long)TRACK_RADIUS_MM * TRACK_RADIUS_MM;
+      for (int i = 0; i < 3; i++) {
+        if (!t[i].active) continue;
+        long dx = t[i].x - fx, dy = t[i].y - fy;
+        long d = dx * dx + dy * dy;
+        if (d <= bestDist) { bestDist = d; best = i; }
+      }
+
+      if (now - suspectStart < SETTLE_MS) break;   // let the body settle
+
+      if (best < 0) {                              // target lost
+        Serial.println(">> Cancelled: target lost");
+        state = MONITOR;
+        break;
+      }
+
+      fx = t[best].x;
+      fy = t[best].y;
+      int absV = abs(t[best].v);
+
+      if (absV <= STILL_SPEED_CMS) {
+        if (stillSince == 0) stillSince = now;
+        if (now - stillSince >= STILL_TIME_MS) {
+          Serial.println("*****************************");
+          Serial.printf("***   FALL DETECTED!      *** (X:%d Y:%d mm)\n", fx, fy);
+          Serial.println("*****************************");
+          // TODO: trigger buzzer / send alert here
+          state = COOLDOWN;
+          cooldownStart = now;
+        }
+      } else if (absV >= MOVE_SPEED_CMS) {
+        stillSince = 0;                            // moving again, restart timer
+      }
+      break;
+    }
+
+    case COOLDOWN:
+      if (now - cooldownStart >= COOLDOWN_MS) {
+        Serial.println(">> Monitoring resumed");
+        state = MONITOR;
+      }
+      break;
+  }
+
+  // Remember speeds for the next frame's jump calculation
+  for (int i = 0; i < 3; i++)
+    prevAbsV[i] = t[i].active ? abs(t[i].v) : 0;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial2.begin(256000, SERIAL_8N1, RXD2, TXD2);
+  Serial.println("\n--- LD2450 Fall Detection started ---");
+}
+
+void loop() {
+  static uint8_t buf[30];
+  static int idx = 0;
+
+  while (Serial2.available()) {
+    uint8_t b = Serial2.read();
+
+    if (idx == 0) { if (b == 0xAA) buf[idx++] = b; continue; }
+    if (idx == 1) { if (b == 0xFF) buf[idx++] = b; else idx = (b == 0xAA) ? 1 : 0; continue; }
+
+    buf[idx++] = b;
+
+    if (idx == 30) {
+      if (buf[28] == 0x55 && buf[29] == 0xCC) {
+        packetCount++;
+
+        Target t[3];
+        for (int i = 0; i < 3; i++) {
+          int o = 4 + i * 8;
+          t[i].x = decode(buf[o],     buf[o + 1]);
+          t[i].y = decode(buf[o + 2], buf[o + 3]);
+          t[i].v = decode(buf[o + 4], buf[o + 5]);
+          t[i].active = !(t[i].x == 0 && t[i].y == 0);
+        }
+
+        processFrame(t);   // run detection on EVERY frame
+
+        // Throttled debug print
+        if (millis() - lastPrint >= 200) {
+          lastPrint = millis();
+          for (int i = 0; i < 3; i++) {
+            if (t[i].active)
+              Serial.printf("T%d X:%5d mm  Y:%5d mm  V:%4d cm/s\n",
+                            i + 1, t[i].x, t[i].y, t[i].v);
+          }
+        }
+      }
+      idx = 0;
+    }
+  }
+}

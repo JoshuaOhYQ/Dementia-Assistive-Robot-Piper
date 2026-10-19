@@ -44,9 +44,9 @@
   const char *MQTT_HOST     = "broker.emqx.io";   // public, unencrypted, demo only
   const uint16_t MQTT_PORT  = 1883;
 #else
-  const char *WIFI_SSID     = "YOUR_WIFI_SSID";
-  const char *WIFI_PASS     = "YOUR_WIFI_PASSWORD";
-  const char *MQTT_HOST     = "192.168.1.100";    // <-- your PC's LAN IP (ipconfig)
+  const char *WIFI_SSID     = "BigDong";
+  const char *WIFI_PASS     = "645619123";
+  const char *MQTT_HOST     = "172.20.10.5";      // the IP from preflight
   const uint16_t MQTT_PORT  = 1883;
 #endif
 

@@ -33,11 +33,11 @@
 // 1. CONFIGURATION
 // ===========================================================================
 
-const char *WIFI_SSID    = "YOUR_WIFI_SSID";
-const char *WIFI_PASS    = "YOUR_WIFI_PASSWORD";
+const char *WIFI_SSID    = "BigDong";
+const char *WIFI_PASS    = "645619123";
 
 // Your PC's LAN IPv4 — server.py prints the exact value when it starts.
-const char *BACKEND_HOST = "192.168.1.100";
+const char *BACKEND_HOST = "172.20.10.5";
 const uint16_t BACKEND_PORT = 5000;
 
 const char *NODE_ID = "robot01";

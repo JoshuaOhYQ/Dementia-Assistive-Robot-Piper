@@ -1,0 +1,7 @@
+id,time,source,text,llm_mode,accepted,rejected,all_ok,speech,llm_ms,mqtt_ms,backend_ms,device_rtt_ms,correct_y_n
+457d6307,2026-10-20 22:17:13,robot01,turn on the living room light,offline-stub,living_light on,,yes,"Okay, turning the living room light on.",0.2,84.4,103.1,254,
+05019fa1,2026-10-20 22:18:31,robot01,switch on the bedroom light,offline-stub,bedroom_light on,,yes,"Okay, turning the bedroom light on.",0.1,114.4,125.9,215,
+acb32a6d,2026-10-20 22:18:50,robot01,switch off the bedroom light,offline-stub,bedroom_light off,,yes,"Okay, turning the bedroom light off.",0.1,110.1,120.7,245,
+73b17fc7,2026-10-20 22:18:57,robot01,turn on the fan,offline-stub,fan on,,yes,"Okay, turning the fan on.",0.1,212.0,220.3,355,
+47cecd26,2026-10-20 22:19:03,robot01,set the fan to 40,offline-stub,fan set 40,,yes,Setting the fan to 40 percent.,0.1,84.3,92.6,175,
+0099a23b,2026-10-20 22:19:10,robot01,turn off the fan,offline-stub,fan off,,yes,"Okay, turning the fan off.",0.1,108.8,120.5,445,

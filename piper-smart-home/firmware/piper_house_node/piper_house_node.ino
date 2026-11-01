@@ -46,7 +46,7 @@
 #else
   const char *WIFI_SSID     = "BigDong";
   const char *WIFI_PASS     = "645619123";
-  const char *MQTT_HOST     = "172.20.10.5";      // the IP from preflight
+  const char *MQTT_HOST     = "172.20.10.2";      // the IP from preflight
   const uint16_t MQTT_PORT  = 1883;
 #endif
 

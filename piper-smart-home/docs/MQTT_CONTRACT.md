@@ -63,7 +63,11 @@ Rules of thumb used here (defensible in a viva):
 | `stove_on_seconds` | How long the stove has been on | derived on house node | `{"value": <int seconds>}` |
 
 `stove` is deliberately **off-only** from the AI path. An LLM is never allowed to energise a
-heating element. Turning the stove *on* is a human-only action (physical switch).
+heating element. Turning the stove *on* is a human-only action: the **stove knob**, a push
+button on GPIO 32 (to GND, internal pull-up) on the house node, or key `s` in
+`sim/virtual_house.py`. Each press toggles the stove and publishes its state with
+`source: "manual"` and `req_id: "manual"`. The knob works even when Wi-Fi or the broker is down;
+the new state is re-published on reconnect.
 
 ---
 
@@ -103,6 +107,13 @@ heating element. Turning the stove *on* is a human-only action (physical switch)
 
 `req_id` is `"boot"` when the node publishes its start-up state, and `"manual"` if the state
 changed from a physical button.
+
+**Diary link.** The backend writes every state *change* it did not cause into the diary
+(`Diary.state_logger()`, passed to `SmartHome(on_state_change=...)`). Changes with source
+`voice`/`rule` are not logged again here, because `command_bridge.py` and `rules.py` already log
+them. The first retained message per device after start-up is the old state replaying, so it is
+not logged. Result: "when did I turn the stove on?" is answerable, e.g.
+`09:00 stove: on (manual)`.
 
 ### 4.3 Availability — `piper/availability/house01` (retained, LWT)
 

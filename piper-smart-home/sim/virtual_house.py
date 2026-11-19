@@ -10,7 +10,8 @@ extra hardware.
 
 Keys while running:
     o   toggle living-room occupancy (stands in for the PIR)
-    s   toggle the stove ON by hand (the "human at the cooker" action)
+    s   the stove knob: toggle the stove on/off BY HAND (same as GPIO 32 on
+        the real board; the only way the stove can be switched on)
     p   print the current house state
     q   quit
 """
@@ -150,7 +151,7 @@ def main():
 
     interactive = sys.stdin is not None and sys.stdin.isatty()
     if interactive:
-        print("\n  keys:  o = toggle occupancy   s = stove on (by hand)   "
+        print("\n  keys:  o = toggle occupancy   s = stove knob (by hand)   "
               "p = print state   q = quit\n")
     else:
         print("\n  running headless (no terminal attached) — Ctrl-C to stop\n")
@@ -174,14 +175,17 @@ def main():
                 publish_sensor(client, "living_occupancy", occupancy)
                 print(f"  occupancy = {occupancy}")
             elif key == "s":
+                # The stove knob, exactly like GPIO 32 on the real house node.
                 with _lock:
-                    state["stove"]["state"] = "on"
-                    state["stove"]["value"] = 100
+                    now_on = state["stove"]["state"] != "on"
+                    state["stove"]["state"] = "on" if now_on else "off"
+                    state["stove"]["value"] = 100 if now_on else 0
                     state["stove"]["source"] = "manual"
                     state["stove"]["req_id"] = "manual"
-                stove_on_since = time.time()
+                stove_on_since = time.time() if now_on else 0.0
                 publish_state(client, "stove")
-                print("  stove switched on by hand (the AI cannot do this)")
+                print(f"  stove switched {'ON' if now_on else 'OFF'} by hand "
+                      f"(only a person can switch it on)")
             elif key == "p":
                 for d in DEVICES:
                     publish_state(client, d)

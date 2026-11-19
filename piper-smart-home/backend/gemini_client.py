@@ -21,6 +21,11 @@ API_KEY = os.getenv("GEMINI_API_KEY", "")
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 _model = None
+# How many times a live Gemini call failed and the stub answered instead.
+# Test runs check this, so a dead model or key can't quietly pass as "gemini".
+fallback_count = 0
+last_error = ""
+
 if API_KEY:
     try:
         import google.generativeai as genai
@@ -33,6 +38,7 @@ if API_KEY:
 
 def ask(system_prompt: str, user_text: str) -> str:
     """Return the model's raw text. Falls back to the stub on any failure."""
+    global fallback_count, last_error
     if _model is not None:
         try:
             resp = _model.generate_content(
@@ -42,6 +48,8 @@ def ask(system_prompt: str, user_text: str) -> str:
             )
             return resp.text
         except Exception as e:                  # noqa: BLE001
+            fallback_count += 1
+            last_error = str(e)[:300]
             log.error("Gemini call failed (%s) — using offline stub", e)
     return _offline_stub(user_text)
 
@@ -66,6 +74,13 @@ def _match_device(text: str) -> str | None:
 
 def _offline_stub(user_text: str) -> str:
     t = user_text.lower().strip()
+
+    # Questions about the past: same "query" contract as the real model.
+    import diary_query                      # imported here to keep start-up light
+    q = diary_query.from_keywords(t)
+    if q:
+        return json.dumps({"speech": "Let me check my notes.", "commands": [], "query": q})
+
     device = _match_device(t)
 
     # fan speed: "set the fan to 60"
@@ -96,9 +111,6 @@ def _offline_stub(user_text: str) -> str:
         })
 
     if "medicine" in t or "pill" in t or "tablet" in t:
-        if any(w in t for w in ("have i", "did i", "already")):
-            return json.dumps({"speech": "Let me check my notes for you.",
-                               "commands": [], "log": {}})
         return json.dumps({"speech": "Good, I've written down that you took your medicine.",
                            "commands": [],
                            "log": {"event": "medicine", "value": "taken"}})

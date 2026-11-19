@@ -58,7 +58,7 @@ LOG_FIELDS = ["id", "time", "source", "text", "llm_mode", "accepted", "rejected"
 app = Flask(__name__)
 
 diary = Diary()
-home = SmartHome()
+home = SmartHome(on_state_change=diary.state_logger())   # stove knob etc. -> diary
 
 # One utterance at a time — the report's single-loop design. A second request
 # waits for the first to finish instead of racing it.

@@ -33,6 +33,8 @@ os.environ.setdefault("PIPER_DB", TEST_DB)
 
 import command_bridge          # noqa: E402
 import config                  # noqa: E402
+import gemini_client           # noqa: E402
+import pipeline                # noqa: E402
 from diary import Diary        # noqa: E402
 from rules import RuleEngine   # noqa: E402
 from smart_home import SmartHome  # noqa: E402
@@ -50,7 +52,7 @@ class Base(unittest.TestCase):
         )
         time.sleep(2.0)
         cls.diary = Diary(TEST_DB)
-        cls.home = SmartHome()
+        cls.home = SmartHome(on_state_change=cls.diary.state_logger())
         assert cls.home.connect(timeout=5), "broker not reachable on localhost:1883"
         time.sleep(1.5)
 
@@ -237,6 +239,60 @@ class TestDiary(Base):
     def test_41_formats_for_prompt(self):
         lines = Diary.as_lines(self.diary.today(limit=5))
         self.assertTrue(all("—" in l for l in lines))
+
+
+class TestStoveKnobLink(Base):
+    """Step 6: the stove knob (GPIO 32 on the board, key 's' in the virtual
+    house) reaches the diary over MQTT, so PIPER can answer about it later."""
+
+    def _knob(self):
+        self.house.stdin.write("s\n")
+        self.house.stdin.flush()
+
+    def _wait(self, check, timeout=4.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            if check():
+                return True
+            time.sleep(0.1)
+        return False
+
+    def _stove_rows(self):
+        return self.diary._conn.execute(
+            "SELECT value, source, kind FROM events WHERE event='stove' "
+            "ORDER BY id").fetchall()
+
+    def test_50_knob_on_is_logged_as_manual(self):
+        before = len(self._stove_rows())
+        self._knob()
+        self.assertTrue(self._wait(lambda: self.home.states["stove"].state == "on"))
+        self.assertTrue(self._wait(lambda: len(self._stove_rows()) > before),
+                        "the knob did not reach the diary")
+        self.assertEqual(self._stove_rows()[-1], ("on (manual)", "manual", "device"))
+
+    def test_51_pipeline_answers_from_the_knob_event(self):
+        saved, gemini_client._model = gemini_client._model, None   # offline stub
+        try:
+            r = pipeline.process("did I turn on the stove?", self.home, self.diary)
+        finally:
+            gemini_client._model = saved
+        self.assertIn("by hand", r["speech"])
+        self.assertIn("Right now it is on", r["speech"])
+
+    def test_52_voice_off_is_not_double_logged(self):
+        before = len(self._stove_rows())
+        ok, _ = self.home.command("stove", "off", source="voice")
+        self.assertTrue(ok)
+        time.sleep(0.5)
+        # command_bridge logs voice commands itself; the logger must stay quiet
+        self.assertEqual(len(self._stove_rows()), before)
+
+    def test_53_knob_off_is_logged(self):
+        self._knob()                                   # off -> on
+        self.assertTrue(self._wait(lambda: self.home.states["stove"].state == "on"))
+        self._knob()                                   # on -> off
+        self.assertTrue(self._wait(lambda: self.home.states["stove"].state == "off"))
+        self.assertTrue(self._wait(lambda: self._stove_rows()[-1][0] == "off (manual)"))
 
 
 if __name__ == "__main__":

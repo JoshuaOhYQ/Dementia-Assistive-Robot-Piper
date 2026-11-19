@@ -21,6 +21,9 @@
  *   GPIO 25 -> fan                 (LED via PWM / motor driver)
  *   GPIO 33 -> stove indicator     (RED LED / relay IN3)
  *   GPIO 14 <- occupancy input     (PIR OUT, or a pushbutton to 3V3 for testing)
+ *   GPIO 32 <- stove knob           (push button to GND, internal pull-up)
+ *              The ONLY way to switch the stove ON. Publishes source "manual",
+ *              so the backend writes it in the diary.
  *   GPIO  2 -> onboard LED, used as the "MQTT connected" heartbeat
  * ---------------------------------------------------------------------------
  */
@@ -86,6 +89,8 @@ Device devices[] = {
 const uint8_t DEVICE_COUNT = sizeof(devices) / sizeof(devices[0]);
 
 const uint8_t PIN_OCCUPANCY = 14;
+const uint8_t PIN_STOVE_KNOB = 32;     // push button -> GND
+const uint32_t KNOB_DEBOUNCE_MS = 50;
 const uint8_t PIN_HEARTBEAT = 2;
 
 // LEDC (PWM) settings for the fan
@@ -107,6 +112,9 @@ bool     lastOccupancy      = false;
 uint32_t lastOccupancyPub   = 0;
 uint32_t stoveOnSince       = 0;      // millis() when the stove went on, 0 = off
 uint32_t lastStoveTimerPub  = 0;
+bool     knobStable         = HIGH;   // HIGH = not pressed (pull-up)
+bool     knobLastRead       = HIGH;
+uint32_t knobChangedAt      = 0;
 uint32_t mqttRetryAt        = 0;
 uint16_t mqttBackoffMs      = 1000;   // grows to 30 s
 
@@ -181,6 +189,38 @@ void publishSensor(const char *sensorId, JsonDocument &doc) {
 
 void publishAllStates() {
   for (uint8_t i = 0; i < DEVICE_COUNT; i++) publishState(&devices[i]);
+}
+
+// ===========================================================================
+// 4b. STOVE KNOB — the human-only way to switch the stove on
+// ===========================================================================
+
+/* Each press toggles the stove. This is a physical action by the person, so
+   the remote "off-only" interlock does not apply here. It runs even when the
+   Wi-Fi or broker is down: the stove must always respond to its own knob. The
+   new state is published when connected, and re-published on reconnect. */
+void handleStoveKnob(uint32_t now) {
+  bool reading = digitalRead(PIN_STOVE_KNOB);
+  if (reading != knobLastRead) {
+    knobLastRead = reading;
+    knobChangedAt = now;
+  }
+  if (now - knobChangedAt < KNOB_DEBOUNCE_MS || reading == knobStable) return;
+
+  knobStable = reading;
+  if (knobStable != LOW) return;          // act on the press, not the release
+
+  Device *d = findDevice("stove");
+  if (!d) return;
+  d->state = !d->state;
+  strncpy(d->reqId,  "manual", sizeof(d->reqId) - 1);
+  strncpy(d->source, "manual", sizeof(d->source) - 1);
+  d->reqId[sizeof(d->reqId) - 1] = '\0';
+  d->source[sizeof(d->source) - 1] = '\0';
+  applyOutput(d);
+  stoveOnSince = d->state ? now : 0;
+  Serial.printf("[KNOB] stove turned %s by hand\n", d->state ? "ON" : "OFF");
+  if (mqtt.connected()) publishState(d);
 }
 
 // ===========================================================================
@@ -263,7 +303,8 @@ void connectWiFi() {
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
-    delay(300);
+    // keep the stove knob working while we wait for Wi-Fi
+    for (int i = 0; i < 30; i++) { handleStoveKnob(millis()); delay(10); }
     Serial.print('.');
   }
   if (WiFi.status() == WL_CONNECTED) {
@@ -321,6 +362,7 @@ void setup() {
 
   pinMode(PIN_HEARTBEAT, OUTPUT);
   pinMode(PIN_OCCUPANCY, INPUT);          // use INPUT_PULLDOWN with a button
+  pinMode(PIN_STOVE_KNOB, INPUT_PULLUP);
 
   for (uint8_t i = 0; i < DEVICE_COUNT; i++) {
     if (devices[i].type == DIMMABLE_DEV) {
@@ -343,6 +385,8 @@ void setup() {
 }
 
 void loop() {
+  handleStoveKnob(millis());     // first, so the knob works with no network
+
   if (WiFi.status() != WL_CONNECTED) {
     digitalWrite(PIN_HEARTBEAT, LOW);
     connectWiFi();

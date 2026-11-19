@@ -17,6 +17,7 @@ import re
 import time
 
 import config
+from diary import KINDS, WINDOWS
 from smart_home import SmartHome
 
 log = logging.getLogger("piper.bridge")
@@ -33,6 +34,9 @@ def build_system_prompt(home: SmartHome, diary_lines: list[str] | None = None) -
         device_lines.append(f'  - "{dev_id}"  = the {d["friendly"]}, actions: {acts}{note}')
 
     diary = "\n".join(f"  - {l}" for l in (diary_lines or [])) or "  - (nothing recorded yet)"
+    kinds = ", ".join(f'"{k}"' for k in KINDS)
+    windows = ", ".join(f'"{w}"' for w in WINDOWS)
+    things = ", ".join(f'"{t}"' for t in list(config.DEVICES) + ["medicine"])
 
     return f"""You are PIPER, a calm and patient companion robot for an elderly person
 living with early-to-moderate dementia. Speak in short, plain sentences. Never rush
@@ -52,7 +56,8 @@ You MUST reply with a single JSON object and nothing else:
 {{
   "speech": "<what you say out loud, one or two short sentences>",
   "commands": [ {{"device": "<device_id>", "action": "<action>", "value": <0-100, only for set>}} ],
-  "log": {{"event": "<short label>", "value": "<short value>"}}
+  "log": {{"event": "<short label>", "value": "<short value>"}},
+  "query": {{"kind": "<kind>", "window": "<window>", "thing": "<thing or null>"}}
 }}
 
 Rules:
@@ -62,7 +67,23 @@ Rules:
   they do it themselves, and offer to remind them to turn it off later.
 - If you are not sure which device they mean, ask them in "speech" and return no commands.
 - "log" is optional; include it when something worth remembering happened
-  (medicine taken, a meal, a visitor, feeling unwell).
+  (medicine taken, a meal, a visitor, feeling unwell). When they say they have
+  taken their medicine, use exactly {{"event": "medicine", "value": "taken"}}.
+- "query" is optional; include it ONLY when they ask about the PAST, such as
+  "did I take my pills?", "have I turned the stove off?", "what did I do this
+  morning?". Then "commands" must be [] and "speech" can be just "Let me check."
+  because the system answers from its records, not from you.
+    kind   = one of: {kinds}
+             medication = medicine or pills, device = lights/fan/stove,
+             alert = safety warnings, note = other things worth remembering
+    window = one of: {windows}   (use "today" if they don't say)
+    thing  = one of: {things}, or null if they don't name one
+  If they ask about a time not in that list (for example "last week"), still
+  send the query with the window they used; the system will explain.
+- Never say from your own memory whether they took their medicine or switched
+  something off. Always use "query" for that.
+- Questions about NOW ("is the light on?") are answered from CURRENT STATE OF
+  THE HOME above, without a query.
 """
 
 

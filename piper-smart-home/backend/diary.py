@@ -11,6 +11,8 @@ How it is organised (steps 1-5 of the diary work):
   Step 4  reading        events_between()  all events of one kind in a time range
                          last_event()      newest event for one exact device/item
   Step 5  time windows   window_bounds()   "today" -> (start, end)
+  Step 6  MQTT link      state_logger()    logs changes the backend did NOT
+                                           cause, e.g. the stove knob
 
 The older helpers today(), search(), last() and as_lines() are kept unchanged
 so pipeline.py, command_bridge.py, rules.py and the tests keep working.
@@ -166,12 +168,62 @@ class Diary:
         with self._lock:
             return self._conn.execute(sql, params).fetchone()
 
+    def events_for(self, event: str, window: str) -> list[tuple] | None:
+        """All events for one exact device or item in a window, oldest first."""
+        bounds = window_bounds(window)
+        if bounds is None:
+            return None
+        with self._lock:
+            return self._conn.execute(
+                "SELECT ts, event, value, source FROM events "
+                "WHERE event = ? AND ts >= ? AND ts < ? ORDER BY ts, id",
+                (event, *bounds)).fetchall()
+
     def events_in(self, kind: str, window: str) -> list[tuple] | None:
         """events_between() with a window word. None means the word was not allowed."""
         bounds = window_bounds(window)
         if bounds is None:
             return None
         return self.events_between(kind, *bounds)
+
+    # -----------------------------------------------------------------------
+    # Step 6 — the MQTT link
+    # -----------------------------------------------------------------------
+
+    # Sources the backend itself puts in commands. command_bridge.py and
+    # rules.py already log those changes, so logging them here would double up.
+    BACKEND_SOURCES = {"voice", "rule", "http", "eval", "chat", "accuracy", "system"}
+
+    def state_logger(self):
+        """Return a callback for SmartHome(on_state_change=...).
+
+        It writes a diary row whenever a device CHANGES because of something
+        other than PIPER: the stove knob ("manual"), the dashboard, or the house
+        node restarting ("boot"). Without it, "when did I turn the stove on?"
+        has no answer, because only a person can switch the stove on.
+
+        The first message for each device after start-up is the retained state
+        replaying, not a new event, so it is remembered but not logged.
+        """
+        last: dict[str, tuple[str, int]] = {}
+
+        def on_state_change(st):
+            now = (st.state, st.value)
+            before = last.get(st.device_id)
+            last[st.device_id] = now
+            if before is None or before == now or st.state not in ("on", "off"):
+                return
+            source = st.source or "manual"
+            if source in self.BACKEND_SOURCES:
+                return
+            dev = config.DEVICES.get(st.device_id, {})
+            if dev.get("type") == config.DIMMABLE and st.state == "on" and before[0] == "on":
+                value = f"set {st.value}% ({source})"
+            else:
+                value = f"{st.state} ({source})"
+            self.log(st.device_id, value, source=source)
+
+        return on_state_change
 
     # -----------------------------------------------------------------------
     # Older helpers, unchanged — used by pipeline.py, main.py and the tests

@@ -86,7 +86,7 @@ def main():
     print(f"  gemini : {'live' if gemini_client._model else 'offline stub'}\n")
 
     diary = Diary()
-    home = SmartHome()
+    home = SmartHome(on_state_change=diary.state_logger())   # stove knob etc. -> diary
     if not home.connect():
         print("  !! broker not reachable. Is Mosquitto running?")
         print("     Windows:  net start mosquitto")

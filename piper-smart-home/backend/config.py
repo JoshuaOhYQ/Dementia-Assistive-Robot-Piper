@@ -60,6 +60,9 @@ DEVICES = {
         # to energise a heating element. Turning the stove on stays a human act.
         "actions": ["off"],
         "allow_on": False,
+        # No voice control at all, not even "off". Only the person (the stove
+        # knob) and the automatic safety rule (source "rule") may change it.
+        "voice_control": False,
     },
 }
 

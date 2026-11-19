@@ -102,8 +102,14 @@ class TestCommands(Base):
     def test_14_stove_on_refused_by_backend(self):
         ok, msg = self.home.command("stove", "on", source="voice")
         self.assertFalse(ok)
-        self.assertIn("safety", msg.lower())
+        self.assertIn("knob", msg.lower())
         self.assertEqual(self.home.states["stove"].state, "off")
+
+    def test_14b_stove_off_by_voice_refused_by_backend(self):
+        """No voice control of the stove at all, not even 'off'."""
+        ok, msg = self.home.command("stove", "off", source="voice")
+        self.assertFalse(ok)
+        self.assertIn("knob", msg.lower())
 
     def test_15_stove_off_allowed(self):
         ok, _ = self.home.command("stove", "off", source="rule")
@@ -127,6 +133,16 @@ class TestLLMValidation(Base):
         acc, rej = command_bridge.validate_commands([{"device": "stove", "action": "on"}])
         self.assertEqual(acc, [])
         self.assertTrue(any(r.startswith("SAFETY") for r in rej))
+
+    def test_22b_stove_off_blocked_at_validator(self):
+        acc, rej = command_bridge.validate_commands([{"device": "stove", "action": "off"}])
+        self.assertEqual(acc, [])
+        self.assertTrue(any("not voice-controlled" in r for r in rej))
+
+    def test_22c_stove_not_offered_to_the_model(self):
+        prompt = command_bridge.build_system_prompt(self.home)
+        devices = prompt.split("DEVICES YOU MAY CONTROL:")[1].split("You MUST")[0]
+        self.assertNotIn('"stove"', devices)
 
     def test_23_command_flood_capped(self):
         acc, rej = command_bridge.validate_commands(
@@ -279,13 +295,18 @@ class TestStoveKnobLink(Base):
         self.assertIn("by hand", r["speech"])
         self.assertIn("Right now it is on", r["speech"])
 
-    def test_52_voice_off_is_not_double_logged(self):
+    def test_52_house_itself_refuses_a_voice_stove_command(self):
+        """Third layer: even a raw MQTT command that skips the backend checks
+        is refused by the house node when it comes from 'voice'."""
+        self.assertTrue(self._wait(lambda: self.home.states["stove"].state == "on"))
         before = len(self._stove_rows())
-        ok, _ = self.home.command("stove", "off", source="voice")
-        self.assertTrue(ok)
-        time.sleep(0.5)
-        # command_bridge logs voice commands itself; the logger must stay quiet
-        self.assertEqual(len(self._stove_rows()), before)
+        self.home.client.publish(f"{config.TOPIC_ROOT}/cmd/stove", json.dumps(
+            {"action": "off", "req_id": "vtest1", "source": "voice", "ts": 0}), qos=1)
+        time.sleep(1.0)
+        self.assertEqual(self.home.states["stove"].state, "on")
+        self.assertEqual(len(self._stove_rows()), before)      # nothing changed, nothing logged
+        self._knob()                                            # person switches it off
+        self.assertTrue(self._wait(lambda: self.home.states["stove"].state == "off"))
 
     def test_53_knob_off_is_logged(self):
         self._knob()                                   # off -> on

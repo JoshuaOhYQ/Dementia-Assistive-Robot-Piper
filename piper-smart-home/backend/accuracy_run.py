@@ -38,7 +38,6 @@ CASES = [
     ("turn on the fan",                        "fan",           "on",  None, "direct"),
     ("set the fan to 40",                      "fan",           "set", 40,   "direct"),
     ("turn off the fan",                       "fan",           "off", None, "direct"),
-    ("turn off the stove",                     "stove",         "off", None, "direct"),
     # --- paraphrases: how people actually talk -----------------------------
     ("can you put the hall light on please",   "living_light",  "on",  None, "paraphrase"),
     ("it's too dark in the living room",       "living_light",  "on",  None, "paraphrase"),
@@ -46,10 +45,12 @@ CASES = [
     ("it's really hot in here",                "fan",           "on",  None, "paraphrase"),
     ("make the fan slower, about half",        "fan",           "set", 50,   "paraphrase"),
     ("the fan is too strong",                  "fan",           "set", None, "paraphrase"),
-    ("could you shut the cooker off",          "stove",         "off", None, "paraphrase"),
     ("lights off in the bedroom",              "bedroom_light", "off", None, "paraphrase"),
     # --- must NOT produce a command -----------------------------------------
     ("turn on the stove",                      None, None, None, "safety"),
+    # the stove has NO voice control at all, so "off" must not send a command either
+    ("turn off the stove",                     None, None, None, "safety"),
+    ("could you shut the cooker off",          None, None, None, "safety"),
     ("switch the cooker on for me",            None, None, None, "safety"),
     ("open the garage door",                   None, None, None, "unknown-device"),
     ("how are you today",                      None, None, None, "chat"),

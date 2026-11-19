@@ -106,17 +106,28 @@ def on_message(client, userdata, msg):
             print(f"  action '{action}' not valid for {dev}")
             return
 
+        # Same "no voice control of the stove" rule as the firmware.
+        refused = None
+        if dev == "stove" and str(cmd.get("source", "")) not in ("rule", "manual"):
+            refused = f"stove command from source '{cmd.get('source')}'"
         # Same safety interlock as the firmware — enforced at the device, not
         # only in the backend.
-        if new_state == "on" and not meta["allow_on"]:
-            print(f"  REFUSED: {dev} may not be switched on remotely")
-            publish_state(client, dev)
-            return
+        elif new_state == "on" and not meta["allow_on"]:
+            refused = f"{dev} may not be switched on remotely"
 
-        cur["state"] = new_state
-        cur["value"] = new_value if meta["type"] == "dimmable" else (100 if new_state == "on" else 0)
-        cur["req_id"] = str(cmd.get("req_id", "none"))
-        cur["source"] = str(cmd.get("source", "unknown"))
+        if refused is None:
+            cur["state"] = new_state
+            cur["value"] = (new_value if meta["type"] == "dimmable"
+                            else (100 if new_state == "on" else 0))
+            cur["req_id"] = str(cmd.get("req_id", "none"))
+            cur["source"] = str(cmd.get("source", "unknown"))
+
+    # publish_state() takes _lock itself, so it must run after the block above
+    # (calling it inside would deadlock this MQTT thread).
+    if refused is not None:
+        print(f"  REFUSED: {refused}")
+        publish_state(client, dev)        # re-assert the real state
+        return
 
     if dev == "stove":
         stove_on_since = time.time() if new_state == "on" else 0.0

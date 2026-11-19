@@ -122,7 +122,8 @@ class RuleEngine:
             self._stove_warned = True
             self.diary.log("stove", f"warning, on {on_for//60} min unattended", source="rule")
             self.speak("The stove has been on for a while and nobody is in the kitchen. "
-                       "Would you like me to turn it off?")
+                       "Please check it, and turn it off with the knob if you've finished. "
+                       "If it stays on, I'll switch it off for safety.")
             log.info("RULE stove warning at %ss", on_for)
 
     # -- rule 3: light left on in an empty room ------------------------------

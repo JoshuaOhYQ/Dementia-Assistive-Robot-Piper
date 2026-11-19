@@ -215,14 +215,28 @@ class TestRouting(Base):
         self.assertIsNone(r["query"])
 
     def test_26_commands_win_over_query(self):
-        self.fake_gemini({"speech": "Turning the stove off.",
-                          "commands": [{"device": "stove", "action": "off"}],
-                          "query": {"thing": "stove"}})
-        r = self.say("turn off the stove, did I leave it on?")
-        self.assertEqual(self.home.sent, [("stove", "off")])
+        self.fake_gemini({"speech": "Turning the fan off.",
+                          "commands": [{"device": "fan", "action": "off"}],
+                          "query": {"thing": "fan"}})
+        r = self.say("turn off the fan, did I leave it on?")
+        self.assertEqual(self.home.sent, [("fan", "off")])
         self.assertIsNone(r["query"])
 
-    def test_27_stove_on_still_refused(self):
+    def test_26b_no_voice_control_of_the_stove(self):
+        # Even if the model tries, "turn off the stove" sends nothing.
+        self.fake_gemini({"speech": "Turning the stove off.",
+                          "commands": [{"device": "stove", "action": "off"}]})
+        r = self.say("turn off the stove")
+        self.assertEqual(self.home.sent, [])
+        self.assertIn("already off", r["speech"])            # FakeHome stove is off
+        self.home.states["stove"].state = "on"
+        r = self.say("turn off the stove")
+        self.assertEqual(self.home.sent, [])
+        self.assertIn("knob", r["speech"])
+        r = self.say("please switch the cooker off")         # offline stub path
+        self.assertEqual(self.home.sent, [])
+
+    def test_27_stove_on_refused(self):
         r = self.say("turn on the stove")
         self.assertEqual(self.home.sent, [])
         self.assertIsNone(r["query"])

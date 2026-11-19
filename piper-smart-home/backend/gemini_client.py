@@ -82,6 +82,13 @@ def _offline_stub(user_text: str) -> str:
         return json.dumps({"speech": "Let me check my notes.", "commands": [], "query": q})
 
     device = _match_device(t)
+    if device and not config.DEVICES[device].get("voice_control", True):
+        # e.g. the stove: never a command, on or off.
+        return json.dumps({
+            "speech": ("I'm not able to control the stove. "
+                       "Please use the knob on the stove yourself."),
+            "commands": [],
+        })
 
     # fan speed: "set the fan to 60"
     m = re.search(r"\b(\d{1,3})\s*(?:percent|%)?\b", t)

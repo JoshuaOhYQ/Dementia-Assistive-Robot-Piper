@@ -29,6 +29,8 @@ log = logging.getLogger("piper.bridge")
 def build_system_prompt(home: SmartHome, diary_lines: list[str] | None = None) -> str:
     device_lines = []
     for dev_id, d in config.DEVICES.items():
+        if not d.get("voice_control", True):
+            continue                       # e.g. the stove: never offered to the model
         acts = "/".join(d["actions"])
         note = "" if d["allow_on"] else "  (you may ONLY turn this off, never on)"
         device_lines.append(f'  - "{dev_id}"  = the {d["friendly"]}, actions: {acts}{note}')
@@ -63,8 +65,10 @@ You MUST reply with a single JSON object and nothing else:
 Rules:
 - "commands" is [] when the person is only chatting or asking a question.
 - Never put more than {config.MAX_COMMANDS_PER_UTTERANCE} commands in one reply.
-- Never switch the stove ON. If they ask you to, gently say you cannot and suggest
-  they do it themselves, and offer to remind them to turn it off later.
+- You can NEVER control the stove, not on and not off; it is not in the list
+  above. If they ask you to switch it on or off, put no command, and kindly say
+  they need to use the knob on the stove themselves. You may tell them whether it
+  is on right now (CURRENT STATE OF THE HOME) or answer about it with "query".
 - If you are not sure which device they mean, ask them in "speech" and return no commands.
 - "log" is optional; include it when something worth remembering happened
   (medicine taken, a meal, a visitor, feeling unwell). When they say they have
@@ -133,6 +137,11 @@ def validate_commands(commands: list) -> tuple[list[dict], list[str]]:
         if dev is None:
             rejected.append(f"unknown device '{dev_id}'")
             continue
+        # Devices with no voice control (the stove) are refused for EVERY action,
+        # including "off". Only the knob and the automatic safety rule touch it.
+        if not dev.get("voice_control", True):
+            rejected.append(f"SAFETY: '{dev_id}' is not voice-controlled (action={action})")
+            continue
         # The safety interlock is checked FIRST, so that an attempt to energise a
         # protected load is always reported as a safety refusal and never gets
         # buried in a generic "unknown action" message. The distinction matters:
@@ -172,6 +181,19 @@ def validate_commands(commands: list) -> tuple[list[dict], list[str]]:
 SAFETY_LINE = ("For your safety I can't switch that on. "
                 "If you'd like to use it, please turn it on yourself and I'll remind you later.")
 UNKNOWN_LINE = "Sorry, I'm not able to control that."
+STOVE_KNOB_LINE = ("I'm not able to control the stove. "
+                   "Please use the knob on the stove yourself.")
+
+
+def _safety_speech(home, rejections: list[str]) -> str:
+    """What to say when every command was refused for safety."""
+    stove_off = any("not voice-controlled" in r and "action=off" in r for r in rejections)
+    if not stove_off:
+        return SAFETY_LINE                       # an attempt to switch something ON
+    st = getattr(home, "states", {}).get("stove")
+    if getattr(home, "house_online", False) and st is not None and st.state == "off":
+        return "The stove is already off, so there's nothing to do."
+    return STOVE_KNOB_LINE
 
 
 def execute_detailed(home: SmartHome, llm_reply: dict, diary=None,
@@ -203,9 +225,9 @@ def execute_detailed(home: SmartHome, llm_reply: dict, diary=None,
     if failures:
         speech = " ".join(failures)             # hardware did not confirm
     elif rejections and not commands:
-        speech = SAFETY_LINE if safety_hit else UNKNOWN_LINE
+        speech = _safety_speech(home, rejections) if safety_hit else UNKNOWN_LINE
     elif safety_hit:
-        speech = (speech + " " if speech else "") + "I can't switch the stove on, though."
+        speech = (speech + " " if speech else "") + "I can't control the stove, though."
 
     if not failures and diary is not None and isinstance(llm_reply.get("log"), dict):
         entry = llm_reply["log"]

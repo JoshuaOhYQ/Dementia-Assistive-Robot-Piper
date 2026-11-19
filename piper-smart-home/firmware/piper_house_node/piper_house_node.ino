@@ -270,6 +270,16 @@ void onMessage(char *topic, byte *payload, unsigned int len) {
     return;
   }
 
+  // NO VOICE CONTROL OF THE STOVE — enforced on the device too. A remote stove
+  // command is accepted only from the automatic safety rule ("rule") or the
+  // carer's dashboard ("manual"); a voice command never reaches the relay.
+  if (strcmp(d->id, "stove") == 0 &&
+      strcmp(source, "rule") != 0 && strcmp(source, "manual") != 0) {
+    Serial.printf("[CMD ] REFUSED: stove command from source '%s'\n", source);
+    publishState(d);
+    return;
+  }
+
   // SAFETY INTERLOCK — enforced on the device, not only in the backend.
   // Two independent layers must both agree before a heating element energises.
   if (newState && !d->allowOn) {

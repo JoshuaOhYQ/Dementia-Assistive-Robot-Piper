@@ -168,6 +168,11 @@ class SmartHome:
             return False, f"I don't know a device called {device_id}."
 
         action = action.lower().strip()
+        if not dev.get("voice_control", True) and source != "rule":
+            # Second backend layer: even if something bypassed the validator,
+            # only the automatic safety rule may send this device a command.
+            return False, (f"I'm not able to control the {dev['friendly']}. "
+                           f"Please use the knob on the {dev['friendly']} yourself.")
         if action not in dev["actions"]:
             if action == "on" and not dev["allow_on"]:
                 return False, (f"For your safety I can only switch the "

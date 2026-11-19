@@ -55,15 +55,18 @@ Rules of thumb used here (defensible in a viva):
 | `living_light` | Living room light | switch | 26 | `on`, `off`, `toggle` |
 | `bedroom_light` | Bedroom light | switch | 27 | `on`, `off`, `toggle` |
 | `fan` | Living room fan | dimmable | 25 (LEDC PWM) | `on`, `off`, `set` (`value` 0–100) |
-| `stove` | Stove power relay | switch | 33 | `on`, `off` (robot may only send `off` — safety) |
+| `stove` | Stove power relay | switch | 33 | `off` only, and only from `source: "rule"` (or the carer dashboard, `"manual"`). **No voice control.** |
 
 | `sensor_id` | Description | ESP32 GPIO | Payload |
 |---|---|---|---|
 | `living_occupancy` | PIR / occupancy in living room | 14 (input) | `{"value": true/false}` |
 | `stove_on_seconds` | How long the stove has been on | derived on house node | `{"value": <int seconds>}` |
 
-`stove` is deliberately **off-only** from the AI path. An LLM is never allowed to energise a
-heating element. Turning the stove *on* is a human-only action: the **stove knob**, a push
+`stove` has **no voice control at all**: PIPER never switches it on or off because someone
+asked. It is not offered to Gemini, and three layers refuse a voice stove command (the
+validator in `command_bridge.py`, `SmartHome.command()`, and the house node itself, which
+accepts stove commands only from `source` `rule` or `manual`). The only remote action is the
+automatic safety cut-off (`rule`, `off`). Switching the stove on or off is a human action: the **stove knob**, a push
 button on GPIO 32 (to GND, internal pull-up) on the house node, or key `s` in
 `sim/virtual_house.py`. Each press toggles the stove and publishes its state with
 `source: "manual"` and `req_id: "manual"`. The knob works even when Wi-Fi or the broker is down;
@@ -152,7 +155,7 @@ Backend validation before anything is published (`command_bridge.py`):
 
 1. `device` must exist in the registry — unknown device is dropped, not published.
 2. `action` must be in that device's allowed action list.
-3. `stove` + `on` is rejected outright.
+3. Any `stove` command is rejected outright, `on` **and** `off` (no voice control).
 4. `value` is clamped to 0–100 and only accepted for `dimmable` devices.
 5. Max 3 commands per utterance (stops a runaway model flipping the whole house).
 
